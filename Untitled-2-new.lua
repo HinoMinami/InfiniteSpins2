@@ -1,0 +1,313 @@
+local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+
+local Players = game:GetService("Players")
+local player = Players.LocalPlayer
+local localHWID = tostring(player.UserId)
+
+-- KEY SYSTEM - Fetch keys from remote source
+local HttpService = game:GetService("HttpService")
+local keyData = {}
+
+local function loadKeys()
+    local success, response = pcall(function()
+        return HttpService:GetAsync("https://your-replit-app.replit.dev/keys")  -- Replace with your Replit URL
+    end)
+    if success then
+        keyData = HttpService:JSONDecode(response) or {}
+        validKeys = keyData.validKeys or {}  -- Now: key -> duration in seconds
+        keyOwners = keyData.keyOwners or {}  -- Now: key -> {owner: hwid, expiry: timestamp}
+    else
+        print("Failed to load keys: " .. tostring(response))
+        -- Fallback
+        validKeys = {
+            [""] = 3600,  -- 1 hour duration
+        }
+        keyOwners = {}
+    end
+end
+
+loadKeys()
+
+local currentExpiry = nil
+local currentKey = nil
+
+local function saveKeys()
+    local data = {
+        validKeys = validKeys,
+        keyOwners = keyOwners
+    }
+    local json = HttpService:JSONEncode(data)
+    local success, response = pcall(function()
+        return HttpService:PostAsync("https://your-replit-app.replit.dev/keys", json, Enum.HttpContentType.ApplicationJson)
+    end)
+    if success then
+        print("Keys saved successfully")
+    else
+        print("Failed to save keys: " .. tostring(response))
+    end
+end
+
+local function validateKey(key)
+    local duration = validKeys[key]
+    if not duration then
+        return false
+    end
+
+    local binding = keyOwners[key]
+    if not binding then
+        -- First use: bind to user and set expiry
+        keyOwners[key] = {
+            owner = localHWID,
+            expiry = os.time() + duration
+        }
+        saveKeys()
+        currentExpiry = os.time() + duration
+        currentKey = key
+        return true
+    end
+
+    -- Check if bound to this user and not expired
+    if binding.owner ~= localHWID then
+        return false
+    end
+
+    if os.time() > binding.expiry then
+        return false  -- Expired
+    end
+
+    currentExpiry = binding.expiry
+    currentKey = key
+    return true
+end
+
+local function destroyRayfieldObject(obj)
+    local visited = {}
+    local function recurse(value)
+        if type(value) ~= "table" or visited[value] then
+            return
+        end
+        visited[value] = true
+
+        for key, sub in pairs(value) do
+            if typeof(sub) == "Instance" and sub.Parent then
+                pcall(function()
+                    sub:Destroy()
+                end)
+            elseif type(sub) == "table" then
+                recurse(sub)
+            end
+        end
+    end
+
+    if typeof(obj) == "Instance" and obj.Parent then
+        pcall(function()
+            obj:Destroy()
+        end)
+    elseif type(obj) == "table" then
+        recurse(obj)
+    end
+end
+
+-- KEY ENTRY TAB
+local keyWindow = Rayfield:CreateWindow({
+    Name = "Key System",
+    Icon = 0,
+    LoadingTitle = "Minami's Infinite Spins",
+    LoadingSubtitle = "Enter Your Key",
+    Theme = "Default",
+    DisableRayfieldPrompts = false,
+    DisableBuildWarnings = false,
+    ConfigurationSaving = { Enabled = false },
+    Discord = { Enabled = false },
+    KeySystem = false
+})
+
+local keyTab = keyWindow:CreateTab("Key Entry", 4483362458)
+keyTab:CreateInput({
+    Name = "Enter Key",
+    PlaceholderText = "Paste key here",
+    RemoveTextAfterFocusLost = false,
+    Callback = function(Text)
+        local success, err = pcall(function()
+            if validateKey(Text) then
+                Rayfield:Notify({
+                    Title = "Success!",
+                    Content = "Key accepted. Loading...",
+                    Duration = 1.5
+                })
+
+                destroyRayfieldObject(keyTab)
+                destroyRayfieldObject(keyWindow)
+
+                keyTab = nil
+                keyWindow = nil
+
+                local coreGui = game:GetService("CoreGui")
+                local oldRayfield = coreGui:FindFirstChild("Rayfield")
+                if oldRayfield then
+                    oldRayfield:Destroy()
+                end
+                Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+
+                loadMainUI()
+            else
+                Rayfield:Notify({
+                    Title = "Error",
+                    Content = "Invalid key.",
+                    Duration = 2
+                })
+            end
+        end)
+        
+        if not success then
+            print("Callback error: " .. tostring(err))
+            Rayfield:Notify({
+                Title = "Error",
+                Content = "Callback failed: " .. tostring(err),
+                Duration = 5
+            })
+        end
+    end
+})
+
+-- MAIN UI FUNCTION
+function loadMainUI()
+    local Window = Rayfield:CreateWindow({
+        Name = "Minami's Infinite Spins",
+        Icon = 0,
+        LoadingTitle = "Rayfield Interface Suite",
+        LoadingSubtitle = "by Sirius",
+        ShowText = "Rayfield",
+        Theme = "Default",
+        ToggleUIKeybind = "K",
+        DisableRayfieldPrompts = false,
+        DisableBuildWarnings = false,
+        ConfigurationSaving = {
+            Enabled = true,
+            FolderName = nil,
+            FileName = "Big Hub"
+        },
+        Discord = {
+            Enabled = true,
+            Invite = "savMHgac7F",
+            RememberJoins = true
+        },
+        KeySystem = false
+    })
+
+    local Tab = Window:CreateTab("Infinite Spins", 4483362458)
+    local HowToTab = Window:CreateTab("How to Use", 4483362458)
+
+    -- Display remaining time
+    local timeLeft = "N/A"
+    if currentExpiry then
+        local remaining = currentExpiry - os.time()
+        if remaining > 0 then
+            local hours = math.floor(remaining / 3600)
+            local minutes = math.floor((remaining % 3600) / 60)
+            timeLeft = string.format("%dh %dm remaining", hours, minutes)
+        else
+            timeLeft = "Expired"
+        end
+    end
+
+    local TimeDisplay = HowToTab:CreateParagraph({
+        Title = "Key Status",
+        Content = "Current Key: " .. (currentKey or "None") .. "\nTime Remaining: " .. timeLeft
+    })
+
+    -- Update time display every minute
+    coroutine.wrap(function()
+        while true do
+            wait(60)  -- Update every minute
+            if currentExpiry then
+                local remaining = currentExpiry - os.time()
+                if remaining > 0 then
+                    local hours = math.floor(remaining / 3600)
+                    local minutes = math.floor((remaining % 3600) / 60)
+                    timeLeft = string.format("%dh %dm remaining", hours, minutes)
+                else
+                    timeLeft = "Expired"
+                end
+                TimeDisplay:Set({
+                    Content = "Current Key: " .. (currentKey or "None") .. "\nTime Remaining: " .. timeLeft
+                })
+            end
+        end
+    end)()
+
+    local yenOn = false
+    local yenLoop = nil
+    local luckySpinsOn = false
+    local luckySpinsLoop = nil
+    local luckyAbilitySpinsOn = false
+    local luckyAbilityLoop = nil
+
+    local ToggleYen = Tab:CreateToggle({
+        Name = "Infinite Yen",
+        CurrentValue = false,
+        Flag = "ToggleYen",
+        Callback = function(Value)
+            yenOn = Value
+            if Value then
+                yenLoop = coroutine.create(function()
+                    while yenOn do
+                        local args = {[1] = 2}
+                        game:GetService("ReplicatedStorage"):WaitForChild("Packages"):WaitForChild("_Index"):WaitForChild("sleitnick_knit@1.7.0"):WaitForChild("knit"):WaitForChild("Services"):WaitForChild("SeasonService"):WaitForChild("RF"):WaitForChild("RequestRankedReward"):InvokeServer(unpack(args))
+                        wait(3)
+                    end
+                end)
+                coroutine.resume(yenLoop)
+            else
+                yenOn = false
+            end
+        end,
+    })
+
+    local ToggleLuckySpins = Tab:CreateToggle({
+        Name = "Infinite Lucky Spins",
+        CurrentValue = false,
+        Flag = "ToggleLuckySpins",
+        Callback = function(Value)
+            luckySpinsOn = Value
+            if Value then
+                luckySpinsLoop = coroutine.create(function()
+                    while luckySpinsOn do
+                        local args = {[1] = 1}
+                        game:GetService("ReplicatedStorage"):WaitForChild("Packages"):WaitForChild("_Index"):WaitForChild("sleitnick_knit@1.7.0"):WaitForChild("knit"):WaitForChild("Services"):WaitForChild("SeasonService"):WaitForChild("RF"):WaitForChild("RequestRankedReward"):InvokeServer(unpack(args))
+                        wait(3)
+                    end
+                end)
+                coroutine.resume(luckySpinsLoop)
+            else
+                luckySpinsOn = false
+            end
+        end,
+    })
+
+    local ToggleLuckyAbility = Tab:CreateToggle({
+        Name = "Infinite Lucky Ability Spins",
+        CurrentValue = false,
+        Flag = "ToggleLuckyAbility",
+        Callback = function(Value)
+            luckyAbilitySpinsOn = Value
+            if Value then
+                luckyAbilityLoop = coroutine.create(function()
+                    while luckyAbilitySpinsOn do
+                        local args = {[1] = 4}
+                        game:GetService("ReplicatedStorage"):WaitForChild("Packages"):WaitForChild("_Index"):WaitForChild("sleitnick_knit@1.7.0"):WaitForChild("knit"):WaitForChild("Services"):WaitForChild("SeasonService"):WaitForChild("RF"):WaitForChild("RequestRankedReward"):InvokeServer(unpack(args))
+                        wait(3)
+                    end
+                end)
+                coroutine.resume(luckyAbilityLoop)
+            else
+                luckyAbilitySpinsOn = false
+            end
+        end,
+    })
+
+    local WarningParagraph = HowToTab:CreateParagraph({
+        Title = "How to Use",
+        Content = "RULES / LIMITS\nDo NOT go over 1,000 Lucky Spins\nDo NOT go over 1,000 Ability Spins\nDo NOT go over 1,000,000 Yen\n\nREQUIREMENTS\nBronze II → Lucky Spins\nBronze III → Yen\nSilver II → Lucky Ability Spins\n\nNOTE\nWhen leaving the game, close Roblox before rejoining\n\nAlso dont spam execute on script if not working it will result in a ban\n\nThis helps reduce the risk of getting flagged/banned"
+    })
+end
